@@ -12,6 +12,19 @@
 
 --------------------------------------------------------------------------------
 
+## This Fork: Windows / RDNA4 (AMD Consumer GPU) Port
+
+This fork ports sglang to run natively on Windows against AMD RDNA4 GPUs (tested on an RX 9070 XT, gfx1201) using ROCm's Windows builds, which upstream doesn't target. It layers Windows/consumer-ROCm compatibility on top of unmodified sglang functionality — no serving behavior is changed for other platforms.
+
+**Status:**
+- ✅ `sgl_kernel` AOT extension builds and links via hipcc/clang (MSVC can't parse ROCm HIP headers) — see [`python/sglang/kernels/aot/README.md`](python/sglang/kernels/aot/README.md) for build instructions.
+- ✅ Single-GPU inference works end-to-end (verified with a dense model, correct output) via a `torch.distributed`-stub compat shim ([`python/sglang/srt/distributed/compat_shim.py`](python/sglang/srt/distributed/compat_shim.py)) for ROCm-Windows torch wheels that ship without a functional C++ distributed backend.
+- ✅ MoE routing kernels (`topk_softmax`, `topk_sigmoid`, `moe_align`) pass the full test suite on RDNA4/gfx1201 and run without crashing on a pow2-expert MoE model.
+- ⚠️ Known gap: hipBLASLt's Tensile kernel logic library is incomplete for some GEMM shapes on this alpha-stage Windows/gfx1201 build, which can produce incorrect (not crashing) output for some MoE models — tracked as an open issue, not fixed by this fork.
+- The `aiter` attention backend isn't available in this environment (incomplete Windows port); use `--attention-backend triton` instead.
+
+Multi-GPU / NCCL / TP>1 is intentionally unsupported by the compat shim — this fork targets single-device inference.
+
 <p align="center">
 <a href="https://lmsys.org/blog/"><b>Blog</b></a> |
 <a href="https://docs.sglang.io/"><b>Documentation</b></a> |

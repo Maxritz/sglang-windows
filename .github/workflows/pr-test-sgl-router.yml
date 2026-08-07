@@ -39,6 +39,7 @@ jobs:
   # see *why* the tiers were skipped instead of guessing.
   sgl-router-gate:
     name: gate
+    if: github.repository == 'sgl-project/sglang'
     runs-on: ubuntu-latest
     outputs:
       should_run: ${{ steps.decide.outputs.should_run }}

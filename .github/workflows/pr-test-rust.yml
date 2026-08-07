@@ -28,9 +28,10 @@ env:
 jobs:
   build-wheel:
     if: |
-      github.event_name != 'pull_request' ||
+      github.repository == 'sgl-project/sglang' &&
+      (github.event_name != 'pull_request' ||
       (github.event.action != 'labeled' && contains(github.event.pull_request.labels.*.name, 'run-ci')) ||
-      (github.event.action == 'labeled' && github.event.label.name == 'run-ci')
+      (github.event.action == 'labeled' && github.event.label.name == 'run-ci'))
     # Pin to 22.04 so the wheel auditwheel-tags as manylinux_2_35; the
     # self-hosted GPU runners are Ubuntu 22.04 (glibc 2.35) and reject
     # manylinux_2_39 wheels produced on ubuntu-latest (Ubuntu 24.04).
@@ -125,9 +126,10 @@ jobs:
 
   unit-tests:
     if: |
-      github.event_name != 'pull_request' ||
+      github.repository == 'sgl-project/sglang' &&
+      (github.event_name != 'pull_request' ||
       (github.event.action != 'labeled' && contains(github.event.pull_request.labels.*.name, 'run-ci')) ||
-      (github.event.action == 'labeled' && github.event.label.name == 'run-ci')
+      (github.event.action == 'labeled' && github.event.label.name == 'run-ci'))
     runs-on: ubuntu-latest
     env:
       RUSTC_WRAPPER: sccache
@@ -193,9 +195,10 @@ jobs:
     name: ${{ matrix.name }}
     needs: build-wheel
     if: |
-      github.event_name != 'pull_request' ||
+      github.repository == 'sgl-project/sglang' &&
+      (github.event_name != 'pull_request' ||
       (github.event.action != 'labeled' && contains(github.event.pull_request.labels.*.name, 'run-ci')) ||
-      (github.event.action == 'labeled' && github.event.label.name == 'run-ci')
+      (github.event.action == 'labeled' && github.event.label.name == 'run-ci'))
     # The `responses` matrix entry is intentionally omitted. It needs
     # `docker run gvenzl/oracle-xe` + `docker run shoofio/brave-search-mcp-sse`
     # on the runner host, but the 2-/4-gpu-h100 runners are themselves
@@ -330,9 +333,10 @@ jobs:
 
   docker-build-test:
     if: |
-      github.event_name != 'pull_request' ||
+      github.repository == 'sgl-project/sglang' &&
+      (github.event_name != 'pull_request' ||
       (github.event.action != 'labeled' && contains(github.event.pull_request.labels.*.name, 'run-ci')) ||
-      (github.event.action == 'labeled' && github.event.label.name == 'run-ci')
+      (github.event.action == 'labeled' && github.event.label.name == 'run-ci'))
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout repository
@@ -357,9 +361,10 @@ jobs:
     # are python:3.12-slim mocks); the h100 matrix runners are unsuitable
     # because they're containers without a Docker daemon.
     if: |
-      github.event_name != 'pull_request' ||
+      github.repository == 'sgl-project/sglang' &&
+      (github.event_name != 'pull_request' ||
       (github.event.action != 'labeled' && contains(github.event.pull_request.labels.*.name, 'run-ci')) ||
-      (github.event.action == 'labeled' && github.event.label.name == 'run-ci')
+      (github.event.action == 'labeled' && github.event.label.name == 'run-ci'))
     runs-on: ubuntu-22.04
     timeout-minutes: 30
     steps:

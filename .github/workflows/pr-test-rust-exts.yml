@@ -32,9 +32,10 @@ concurrency:
 jobs:
   sglang-mm-unit:
     if: |
-      github.event_name != 'pull_request' ||
+      github.repository == 'sgl-project/sglang' &&
+      (github.event_name != 'pull_request' ||
       (github.event.action != 'labeled' && contains(github.event.pull_request.labels.*.name, 'run-ci')) ||
-      (github.event.action == 'labeled' && github.event.label.name == 'run-ci')
+      (github.event.action == 'labeled' && github.event.label.name == 'run-ci'))
     runs-on: ubuntu-latest
     timeout-minutes: 15
     defaults:

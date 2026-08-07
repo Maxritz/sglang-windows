@@ -25,6 +25,7 @@ concurrency:
 jobs:
   # ==================== Check Changes ==================== #
   check-changes:
+    if: github.repository == 'sgl-project/sglang'
     runs-on: ubuntu-latest
     outputs:
       changes_exist: ${{ steps.filter.outputs.main_package == 'true' || steps.filter.outputs.multimodal_gen == 'true' || steps.run-mode.outputs.run_all_tests == 'true'}}
@@ -78,6 +79,7 @@ jobs:
     secrets: inherit
 
   set-image-config:
+    if: github.repository == 'sgl-project/sglang'
     runs-on: ubuntu-latest
     outputs:
       CANN_image_a3: ${{ steps.set-vars.outputs.CANN_image_a3 }}
