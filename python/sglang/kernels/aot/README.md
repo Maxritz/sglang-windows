@@ -44,6 +44,35 @@ make build MAX_JOBS=2
 make build MAX_JOBS=2 CMAKE_ARGS="-DSGL_KERNEL_COMPILE_THREADS=1"
 ```
 
+### Building on Windows for AMD RDNA4 (gfx1201)
+
+The ROCm Windows port builds `common_ops.pyd` in place with `setup_rocm.py` (hipcc/clang driven through ninja):
+
+```bash
+# From a "Developer PowerShell for VS" prompt (vcvars64 loaded) with the aot dir as CWD
+$env:DISTUTILS_USE_SDK = "1"
+python setup_rocm.py build_ext --inplace
+```
+
+Requirements and gotchas:
+
+- **AMD ROCm for Windows** (hipcc/clang + HIP/hipBLAS/hipRTC libs), **CMake ≥3.31**, **ninja**, Python ≥3.10, torch `2.11.0+rocm`.
+- **All translation units must compile with hipcc/clang.** MSVC `cl` cannot parse ROCm HIP headers. This is why the extension entry point is `csrc/common_extension_rocm.cu` and `csrc/memory/weak_ref_tensor.cu` (rather than `.cc`): MSVC emitted dllimport thunks for `c10::ValueError`'s inherited constructor that the torch DLLs do not export (`LNK2001`), while clang inlines it to the exported base ctor.
+- Build flags baked into `setup_rocm.py`: `-DUSE_ROCM`, `C10_CUDA_BUILD_SHARED_LIBS=1` (mandatory), `-fms-runtime-lib=dll` (torch wheel DLLs are `/MD`), `__HIP_NO_HALF_OPERATORS__=1` / `__HIP_NO_HALF_CONVERSIONS__=1`, and gfx1201/RDNA4 defines.
+- `include/` contains small shims that the torch wheels do not ship for HIP: `ATen/core/TensorBase.h` (out-of-line `data_ptr<T>()`), `ATen/hip/`, `c10/hip/`, `hip-compat/`, and `torch/all.h`.
+- **hipify-generated files are not committed.** `setup_rocm.py` regenerates `.hip` twins (e.g. `include/torch/all_hip.h` and the `csrc/**/*.hip` files under `.gitignore`) from the `.cu`/`.h` sources. Exceptions tracked by hand: `csrc/allreduce/{custom_all_reduce,deterministic_all_reduce}.hip` (originally hip-native) and `csrc/mamba/causal_conv1d.hip` (source of truth).
+- Deployed output lands in `python/sgl_kernel/sm100/` (`torch.cuda.get_device_properties(0).major=12, minor=0` on RDNA4 → `load_utils` maps it to the `sm100` subdir).
+
+Smoke check (validates `rotary_embedding`, `moe_align_block_size`, `apply_token_bitmask_inplace_cuda`, `weak_ref_tensor`):
+
+```bash
+.venv312\Scripts\python.exe -c "import sgl_kernel; import torch; \
+  a = torch.randn(4, 8, 128, dtype=torch.float16, device='cuda'); \
+  sgl_kernel.rotary_embedding(a, torch.randn(4, 8, 8, dtype=torch.float16, device='cuda'), torch.randint(0, 128, (4,), dtype=torch.int32, device='cuda'), a, 128, 1)"
+```
+
+Note: `apply_token_bitmask_inplace_cuda`'s bitmask convention is bit=1 = allowed; an "allow all" mask is `torch.full((n,), -1, dtype=torch.int32)`, not `torch.ones`.
+
 ## Contribution
 
 ### Steps to add a new kernel:

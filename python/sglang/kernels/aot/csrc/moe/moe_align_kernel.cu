@@ -17,8 +17,6 @@ limitations under the License.
 #include <ATen/cuda/CUDAContext.h>
 #include <c10/cuda/CUDAGuard.h>
 
-#include <THC/THCAtomics.cuh>
-
 #include "utils.h"
 
 #define VEC_SIZE 4

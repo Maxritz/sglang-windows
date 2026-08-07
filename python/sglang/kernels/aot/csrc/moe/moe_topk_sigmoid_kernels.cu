@@ -16,6 +16,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <cuda_bf16.h>
 #include <ATen/cuda/CUDAContext.h>
 #include <c10/cuda/CUDAGuard.h>
 #include <torch/all.h>
@@ -27,6 +28,7 @@ limitations under the License.
 #else
 #include <hipcub/hipcub.hpp>
 #include <hipcub/util_type.hpp>
+namespace cub = hipcub;
 #endif
 
 #include "utils.h"

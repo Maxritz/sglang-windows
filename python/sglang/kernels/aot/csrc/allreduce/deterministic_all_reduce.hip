@@ -14,8 +14,6 @@
 // non-deterministic behavior, so we explicitly avoid it here.
 
 #include <ATen/hip/Exceptions.h>
-#include <ATen/hip/impl/HIPGuardImplMasqueradingAsCUDA.h>
-#include <ATen/hip/impl/HIPStreamMasqueradingAsCUDA.h>
 #include <torch/all.h>
 
 #include "custom_all_reduce_hip.cuh"
@@ -32,8 +30,8 @@ bool _is_weak_contiguous_det(torch::Tensor& t) {
 // Deterministic all-reduce for registered buffers (ROCm)
 // Uses the 1-stage kernel which is deterministic (fixed ordering)
 void deterministic_all_reduce_reg(fptr_t _fa, torch::Tensor& inp, torch::Tensor& out) {
-  const at::hip::OptionalHIPGuardMasqueradingAsCUDA device_guard(device_of(inp));
-  auto stream = c10::hip::getCurrentHIPStreamMasqueradingAsCUDA().stream();
+  const at::cuda::OptionalCUDAGuard device_guard(device_of(inp));
+  auto stream = at::cuda::getCurrentCUDAStream().stream();
   TORCH_CHECK_EQ(inp.scalar_type(), out.scalar_type());
   TORCH_CHECK_EQ(inp.numel(), out.numel());
   TORCH_CHECK(_is_weak_contiguous_det(out));
@@ -164,8 +162,8 @@ void deterministic_all_reduce_reg(fptr_t _fa, torch::Tensor& inp, torch::Tensor&
 
 // Deterministic all-reduce for unregistered buffers (ROCm)
 void deterministic_all_reduce_unreg(fptr_t _fa, torch::Tensor& inp, torch::Tensor& reg_buffer, torch::Tensor& out) {
-  const at::hip::OptionalHIPGuardMasqueradingAsCUDA device_guard(device_of(inp));
-  auto stream = c10::hip::getCurrentHIPStreamMasqueradingAsCUDA().stream();
+  const at::cuda::OptionalCUDAGuard device_guard(device_of(inp));
+  auto stream = at::cuda::getCurrentCUDAStream().stream();
 
   auto input_size = inp.numel() * inp.element_size();
   TORCH_CHECK_EQ(inp.scalar_type(), out.scalar_type());

@@ -27,9 +27,16 @@ def calc_diff(x, y):
 
 
 def is_sm100_supported(device=None) -> bool:
-    return (torch.cuda.get_device_capability(device)[0] == 10) and (
+    cuda_supported = (torch.cuda.get_device_capability(device)[0] == 10) and (
         torch.version.cuda >= "12.8"
     )
+    try:
+        gcn = torch.cuda.get_device_properties(device).gcnArchName
+    except Exception:
+        gcn = ""
+    # Native HIP kernels target gfx1201 (RDNA4) on the Windows ROCm port.
+    rdna4_supported = gcn == "gfx1201"
+    return cuda_supported or rdna4_supported
 
 
 @pytest.mark.skipif(

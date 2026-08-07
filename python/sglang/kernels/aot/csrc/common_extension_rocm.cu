@@ -244,6 +244,34 @@ TORCH_LIBRARY_EXPAND(sgl_kernel, m) {
    */
   m.def("weak_ref_tensor(Tensor tensor) -> Tensor");
   m.impl("weak_ref_tensor", torch::kCUDA, &weak_ref_tensor);
+
+  /*
+   * From csrc/gemm
+   */
+  m.def(
+      "fp8_scaled_mm(Tensor mat_a, Tensor mat_b, Tensor scales_a, Tensor scales_b, ScalarType out_dtype, Tensor? "
+      "bias) -> Tensor");
+  m.impl("fp8_scaled_mm", torch::kCUDA, &fp8_scaled_mm);
+
+  /*
+   * From csrc/expert_specialization
+   */
+#ifndef SGLANG_RDNA4
+  m.def(
+      "es_fp8_blockwise_scaled_grouped_mm(Tensor output, Tensor a, Tensor b, Tensor scales_a, Tensor scales_b, Tensor "
+      "stride_a, Tensor stride_b, Tensor stride_d, Tensor problem_sizes, Tensor expert_offsets, Tensor workspace) -> "
+      "()");
+  m.impl("es_fp8_blockwise_scaled_grouped_mm", &es_fp8_blockwise_scaled_grouped_mm);
+#endif
+  m.def(
+      "es_sm100_mxfp8_blockscaled_grouped_mm(Tensor a, Tensor b, Tensor sfa, Tensor sfb, Tensor d, Tensor "
+      "problem_sizes, Tensor expert_offsets, Tensor blockscale_offsets) -> ()");
+  m.impl("es_sm100_mxfp8_blockscaled_grouped_mm", &es_sm100_mxfp8_blockscaled_grouped_mm);
+  // NOTE: es_sm100_mxfp8_blockscaled_grouped_quant is intentionally NOT registered
+  // on RDNA4: its launcher (es_sm100_mxfp8_blockscaled_group_quant_hip.cuh) uses
+  // Hopper/Blackwell bulk-TMA PTX (cuda::ptx::cp_async_bulk*) + CuTe, which are not
+  // available on gfx1201. The op is only defined by es_..._group_quant.cu, which is
+  // excluded from the RDNA4 build. SM100 targets compile it under !SGLANG_RDNA4.
 }
 
 REGISTER_EXTENSION(common_ops)

@@ -280,3 +280,23 @@ artifacts/
 
 # Internal, non-published docs
 internal-docs/
+
+# RDNA4 (gfx1201) Windows port
+# hipify-generated .hip files (regenerated from .cu at build time). The
+# hip-native TUs are exceptions: custom_all_reduce.hip, deterministic_all_reduce.hip
+# (tracked) and causal_conv1d.hip (source of truth, listed in setup_rocm.py).
+python/sglang/kernels/aot/csrc/**/*.hip
+!python/sglang/kernels/aot/csrc/mamba/causal_conv1d.hip
+
+# hipify-generated aggregate header (regenerated from include/torch/all.h)
+python/sglang/kernels/aot/include/torch/all_hip.h
+
+# Deployed extension + link artifacts (aot/build/ is already covered by **/build/ above)
+python/sglang/kernels/aot/python/sgl_kernel/sm100/
+
+# MSVC link side-cars emitted next to the .pyd
+*.exp
+*.lib
+
+# Scratch verification harness (compile_port.ps1, objs, logs)
+port-test/

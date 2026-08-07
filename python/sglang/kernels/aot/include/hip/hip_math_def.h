@@ -88,11 +88,14 @@ __device__ __forceinline__ dstDtype castFromFloat(float val) {
   return amdgpu::cast<float, dstDtype>(val);
 }
 
-// operator overload to support flashinfer
+// operator overload to support flashinfer. HIP provides friend operators on
+// __half since the 6.x line, so only define these for older HIP runtimes.
+#if defined(__HIP_VERSION) && __HIP_VERSION < 60000000
 __host__ __device__ __forceinline__ __half operator*(const __half& x, const __half& y) {
   __half h_x = x;
   __half h_y = y;
   return __hmul(h_x, h_y);
 }
+#endif
 
 #endif

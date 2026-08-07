@@ -34,7 +34,6 @@ import pickle
 import platform
 import random
 import re
-import resource
 import shutil
 import signal
 import subprocess
@@ -2123,6 +2122,31 @@ def monkey_patch_p2p_access_check():
 
 
 def set_ulimit(target_soft_limit=65535):
+    if sys.platform == "win32":
+        import ctypes
+
+        from ctypes import wintypes
+
+        # Windows does not expose setrlimit. The open-file descriptor cap is
+        # managed by the CRT via _setmaxstdio (default 512). Raise it to the
+        # requested soft limit, clamped to the CRT ceiling of 8192.
+        target_soft_limit = min(target_soft_limit, 8192)
+        cur = ctypes.cdll.msvcrt._getmaxstdio()
+        if cur < target_soft_limit:
+            ret = ctypes.cdll.msvcrt._setmaxstdio(target_soft_limit)
+            if ret == -1:
+                logger.warning(
+                    f"Fail to set _setmaxstdio to {target_soft_limit} "
+                    f"(current {cur})"
+                )
+
+        # The main thread stack size is fixed at link time on Windows
+        # (/F stack commit, or the default 1 MiB) and cannot be raised at
+        # runtime. Skip RLIMIT_STACK.
+        return
+
+    import resource
+
     # number of open files
     resource_type = resource.RLIMIT_NOFILE
     current_soft, current_hard = resource.getrlimit(resource_type)

@@ -19,6 +19,101 @@ limitations under the License.
 // https://github.com/NVIDIA/TensorRT-LLM/blob/v0.16.0/cpp/tensorrt_llm/kernels/cutlass_kernels/fp8_rowwise_gemm/fp8_rowwise_gemm_kernel_template_sm90.h
 
 #include <ATen/cuda/CUDAContext.h>
+#if defined(SGLANG_RDNA4)
+#include <torch/all.h>
+
+#include "fp8_scaled_mm_hip.cuh"
+
+namespace sglang_kernel_rdna4 {
+
+template <typename OutT>
+void fp8_scaled_mm_native_launch(
+    torch::Tensor& out,
+    const torch::Tensor& mat_a,
+    const torch::Tensor& mat_b,
+    const torch::Tensor& scales_a,
+    const torch::Tensor& scales_b,
+    const c10::optional<torch::Tensor>& bias,
+    cudaStream_t stream) {
+  int M = (int)mat_a.size(0);
+  int N = (int)mat_b.size(1);
+  int K = (int)mat_a.size(1);
+  int ldb = (int)mat_b.stride(1);
+
+  dim3 grid((N + kF8TileN - 1) / kF8TileN, (M + kF8TileM - 1) / kF8TileM);
+  bool scalar_a = scales_a.numel() == 1;
+  const OutT* bias_ptr = bias ? reinterpret_cast<const OutT*>(bias->data_ptr()) : nullptr;
+
+  fp8_scaled_mm_kernel<OutT><<<grid, 128, 0, stream>>>(
+      reinterpret_cast<const uint8_t*>(mat_a.data_ptr()),
+      reinterpret_cast<const uint8_t*>(mat_b.data_ptr()),
+      ldb,
+      reinterpret_cast<const float*>(scales_a.data_ptr()),
+      scalar_a ? 1 : 0,
+      reinterpret_cast<const float*>(scales_b.data_ptr()),
+      bias_ptr,
+      reinterpret_cast<OutT*>(out.data_ptr()),
+      M, N, K);
+}
+
+}  // namespace sglang_kernel_rdna4
+
+torch::Tensor fp8_scaled_mm(
+    const torch::Tensor& mat_a,
+    const torch::Tensor& mat_b,
+    const torch::Tensor& scales_a,
+    const torch::Tensor& scales_b,
+    const torch::Dtype& out_dtype,
+    const c10::optional<torch::Tensor>& bias) {
+  TORCH_CHECK(mat_a.is_cuda(), "mat_a must be a CUDA tensor");
+  TORCH_CHECK(mat_b.is_cuda(), "mat_b must be a CUDA tensor");
+  TORCH_CHECK(mat_a.dim() == 2, "mat_a must be a 2D tensor");
+  TORCH_CHECK(mat_b.dim() == 2, "mat_b must be a 2D tensor");
+  TORCH_CHECK(mat_a.stride(1) == 1, "mat_a must be a row major tensor");
+  TORCH_CHECK(mat_b.stride(0) == 1, "mat_b must be a column major tensor");
+  TORCH_CHECK(mat_a.size(1) == mat_b.size(0), "mat_a and mat_b shapes cannot be multiplied");
+
+  TORCH_CHECK(
+      (mat_a.size(1) * mat_a.element_size()) % 16 == 0, "mat_a must be multiple of 16 bytes for memory alignment");
+  TORCH_CHECK(
+      (mat_b.size(0) * mat_b.element_size()) % 16 == 0, "mat_b must be multiple of 16 bytes for memory alignment");
+  TORCH_CHECK(mat_a.scalar_type() == torch::kFloat8_e4m3fn, "mat_a must be Float8_e4m3fn");
+  TORCH_CHECK(mat_b.scalar_type() == torch::kFloat8_e4m3fn, "mat_b must be Float8_e4m3fn");
+  TORCH_CHECK(out_dtype == torch::kHalf || out_dtype == torch::kBFloat16, "out_dtype must be Half or BFloat16");
+
+  TORCH_CHECK(
+      scales_a.numel() == 1 || scales_a.numel() == mat_a.size(0),
+      "scales_a must contain either one scalar scale or one scale per row; got ",
+      scales_a.numel(),
+      " elements for M=",
+      mat_a.size(0));
+  TORCH_CHECK(scales_b.numel() == mat_b.size(1), "size of scales_b is not matched");
+  TORCH_CHECK(scales_a.is_contiguous(), "scales_a must be contiguous");
+  TORCH_CHECK(scales_b.is_contiguous(), "scales_b msut be contiguous");
+  TORCH_CHECK(scales_a.scalar_type() == torch::kFloat32, "scales_a must be Float32");
+  TORCH_CHECK(scales_b.scalar_type() == torch::kFloat32, "scales_b must be Float32");
+
+  if (bias) {
+    TORCH_CHECK(bias->numel() == mat_b.size(1), "size of bias is not matched");
+    TORCH_CHECK(bias->is_contiguous(), "bias must be contiguous");
+    TORCH_CHECK(bias->dtype() == out_dtype, "bias dtype must match output dtype");
+  }
+
+  torch::Tensor out = torch::empty({mat_a.size(0), mat_b.size(1)}, mat_a.options().dtype(out_dtype));
+  TORCH_CHECK((out.size(1) * out.element_size()) % 16 == 0, "out must be multiple of 16 bytes for memory alignment");
+
+  auto stream = at::cuda::getCurrentCUDAStream();
+  if (out_dtype == torch::kBFloat16) {
+    sglang_kernel_rdna4::fp8_scaled_mm_native_launch<at::BFloat16>(
+        out, mat_a, mat_b, scales_a, scales_b, bias, stream);
+  } else {
+    sglang_kernel_rdna4::fp8_scaled_mm_native_launch<at::Half>(
+        out, mat_a, mat_b, scales_a, scales_b, bias, stream);
+  }
+  return out;
+}
+
+#else
 #include <cudaTypedefs.h>
 #include <cutlass/arch/arch.h>
 #include <cutlass/arch/memory.h>
@@ -1218,3 +1313,5 @@ torch::Tensor fp8_scaled_mm(
 
   TORCH_CHECK_NOT_IMPLEMENTED(false, "No implemented fp8_scaled_mm for current compute capability: ", sm_version);
 }
+
+#endif  // !SGLANG_RDNA4
