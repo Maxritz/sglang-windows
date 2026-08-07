@@ -40,6 +40,9 @@ from unittest.mock import patch
 
 import torch
 import torch.distributed
+from sglang.srt.distributed.compat_shim import patch_torch_distributed
+
+patch_torch_distributed()
 from torch.distributed import Backend, ProcessGroup
 
 from sglang.srt import platforms
@@ -308,9 +311,24 @@ class GroupCoordinator:
             self.device = torch.device("cpu")
         self.device_module = torch.get_device_module(self.device)
 
+        # compat_shim installs no-op stand-ins for torch.distributed's collective
+        # API on wheels that ship without a functional C++ distributed backend
+        # (see distributed/compat_shim.py). On those wheels torch.distributed.new_group(...)
+        # always returns None, so this GroupCoordinator can only ever run single-device:
+        # skip the real per-rank subgroup construction (and the not-None asserts below,
+        # which would otherwise fire even in this intentional single-device case) and
+        # leave device_group/cpu_group as None. Every downstream call site already goes
+        # through the same shimmed no-op collectives, which tolerate group=None.
+        _stub_backend = not torch.distributed.is_available()
+
         for ranks in group_ranks:
             subgroup_timeout = _MODEL_PARALLEL_GROUP_TIMEOUT
-            if "mooncake" in torch_distributed_backend:
+            if _stub_backend:
+                device_group = None
+                cpu_group = None
+                active_ranks = torch.ones(len(ranks), dtype=torch.int32, device=self.device)
+                active_ranks_cpu = torch.ones(len(ranks), dtype=torch.int32)
+            elif "mooncake" in torch_distributed_backend:
                 from mooncake.pg import MooncakeBackendOptions
 
                 pg_active_size = len(ranks)
@@ -381,8 +399,9 @@ class GroupCoordinator:
                 self.active_ranks = active_ranks
                 self.active_ranks_cpu = active_ranks_cpu
 
-        assert self.cpu_group is not None
-        assert self.device_group is not None
+        if not _stub_backend:
+            assert self.cpu_group is not None
+            assert self.device_group is not None
 
         # Import communicators
         self.use_pynccl = use_pynccl
@@ -2253,8 +2272,17 @@ def initialize_model_parallel(
     ranks 8 to 15 belong to the second box.
     """
     # Get world size and rank. Ensure some consistencies.
-    assert torch.distributed.is_initialized()
-    backend = backend or torch.distributed.get_backend(get_world_group().device_group)
+    # On compat_shim stub wheels (see distributed/compat_shim.py) is_initialized()
+    # is always False by design -- nothing was ever really initialized, since
+    # init_process_group is a no-op there. Single-device mode still needs to reach
+    # the group construction below, which itself degrades to no-ops via GroupCoordinator's
+    # own is_available() guard.
+    assert torch.distributed.is_available() is False or torch.distributed.is_initialized()
+    backend = backend or (
+        "stub"
+        if not torch.distributed.is_available()
+        else torch.distributed.get_backend(get_world_group().device_group)
+    )
 
     # Joiners construct their local TP/PP layout in global rank space.
     world_size: int = (

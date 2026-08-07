@@ -40,9 +40,15 @@ import fastapi
 import numpy as np
 import pybase64
 import torch
-import uvloop
 import zmq
 import zmq.asyncio
+
+try:
+    import uvloop
+
+    _UVLOOP_AVAILABLE = True
+except ImportError:
+    _UVLOOP_AVAILABLE = False
 from fastapi import BackgroundTasks
 
 from sglang.srt.configs.model_config import ModelConfig
@@ -150,7 +156,8 @@ from sglang.srt.utils.request_logger import RequestLogger
 from sglang.srt.utils.watchdog import Watchdog
 from sglang.utils import TypeBasedDispatcher, get_exception_traceback
 
-asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
+if _UVLOOP_AVAILABLE:
+    asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
 
 _REQUEST_STATE_WAIT_TIMEOUT = envs.SGLANG_REQUEST_STATE_WAIT_TIMEOUT.get()
 
@@ -2158,13 +2165,20 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
 
         # We only add signal handler when the tokenizer manager is in the main thread
         # due to the CPython limitation.
-        if threading.current_thread() is threading.main_thread():
+        # loop.add_signal_handler(...) itself is unimplemented on Windows (any event
+        # loop, not just Proactor) -- raises NotImplementedError regardless of which
+        # signal is requested. SIGTERM still exists as a signal.SIGTERM constant on
+        # Windows, so the SIGQUIT hasattr() guard below doesn't catch this; skip the
+        # whole block on Windows instead.
+        if threading.current_thread() is threading.main_thread() and os.name != "nt":
             signal_handler = self.signal_handler_class(self)
             loop.add_signal_handler(signal.SIGTERM, signal_handler.sigterm_handler)
-            # Update the signal handler for the process. It overrides the sigquit handler in the launch phase.
-            loop.add_signal_handler(
-                signal.SIGQUIT, signal_handler.running_phase_sigquit_handler
-            )
+            # Update the signal handler for the process. It overrides the sigquit
+            # handler in the launch phase. SIGQUIT is unavailable on Windows.
+            if hasattr(signal, "SIGQUIT"):
+                loop.add_signal_handler(
+                    signal.SIGQUIT, signal_handler.running_phase_sigquit_handler
+                )
 
         self.asyncio_tasks.add(
             loop.create_task(print_exception_wrapper(self.sigterm_watchdog))

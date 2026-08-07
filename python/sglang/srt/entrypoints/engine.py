@@ -47,8 +47,14 @@ from typing import (
 )
 
 import torch
-import uvloop
 import zmq
+
+try:
+    import uvloop
+
+    _UVLOOP_AVAILABLE = True
+except ImportError:
+    _UVLOOP_AVAILABLE = False
 
 from sglang.srt.elastic_ep.expert_backup_manager import run_expert_backup_manager
 from sglang.srt.entrypoints.engine_info_bootstrap_server import (
@@ -128,7 +134,8 @@ from sglang.srt.utils.watchdog import SubprocessWatchdog
 from sglang.version import __version__
 
 logger = logging.getLogger(__name__)
-asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
+if _UVLOOP_AVAILABLE:
+    asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
 
 _is_cuda = is_cuda()
 
@@ -1657,25 +1664,29 @@ def _set_envs_and_config(server_args: ServerArgs):
 
     # Signal handlers can only be registered from the main thread.
     if threading.current_thread() is threading.main_thread():
-        if server_args.custom_sigquit_handler is None:
-            # Register the signal handler.
-            # The child processes will send SIGQUIT to this process when any error happens
-            # This process then clean up the whole process tree
-            # Note: This sigquit handler is used in the launch phase, and may be replaced by
-            # the running_phase_sigquit_handler in the tokenizer manager after the grpc server is launched.
-            def launch_phase_sigquit_handler(signum, frame):
-                logger.error(
-                    "Received sigquit from a child process. It usually means the child failed."
-                )
-                kill_process_tree(os.getpid())
+        # SIGQUIT does not exist on Windows; only register the handler when the
+        # platform supports it (Unix-like). On Windows the process-tree cleanup
+        # relies on other mechanisms (e.g. KeyboardInterrupt / termination).
+        if hasattr(signal, "SIGQUIT"):
+            if server_args.custom_sigquit_handler is None:
+                # Register the signal handler.
+                # The child processes will send SIGQUIT to this process when any error happens
+                # This process then clean up the whole process tree
+                # Note: This sigquit handler is used in the launch phase, and may be replaced by
+                # the running_phase_sigquit_handler in the tokenizer manager after the grpc server is launched.
+                def launch_phase_sigquit_handler(signum, frame):
+                    logger.error(
+                        "Received sigquit from a child process. It usually means the child failed."
+                    )
+                    kill_process_tree(os.getpid())
 
-            signal.signal(signal.SIGQUIT, launch_phase_sigquit_handler)
-        else:
-            # Allow users to register a custom SIGQUIT handler for things like crash dump
-            logger.error(
-                f"Using custom SIGQUIT handler: {server_args.custom_sigquit_handler}"
-            )
-            signal.signal(signal.SIGQUIT, server_args.custom_sigquit_handler)
+                signal.signal(signal.SIGQUIT, launch_phase_sigquit_handler)
+            else:
+                # Allow users to register a custom SIGQUIT handler for things like crash dump
+                logger.error(
+                    f"Using custom SIGQUIT handler: {server_args.custom_sigquit_handler}"
+                )
+                signal.signal(signal.SIGQUIT, server_args.custom_sigquit_handler)
     else:
         logger.warning(
             "Signal handler is not added because the engine is not in the "

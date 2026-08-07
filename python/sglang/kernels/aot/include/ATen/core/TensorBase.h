@@ -26,14 +26,9 @@
 
 namespace at {
 
-template <typename T, std::enable_if_t<!std::is_const_v<T>, int>>
+template <typename T>
 const T* TensorBase::const_data_ptr() const {
   return static_cast<const T*>(const_data_ptr());
-}
-
-template <typename T, std::enable_if_t<std::is_const_v<T>, int>>
-const std::remove_const_t<T>* TensorBase::const_data_ptr() const {
-  return static_cast<const std::remove_const_t<T>*>(const_data_ptr());
 }
 
 template <typename T>

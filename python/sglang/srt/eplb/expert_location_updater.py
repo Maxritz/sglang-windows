@@ -18,7 +18,15 @@ from typing import Dict, List, Optional, Tuple
 import einops
 import torch
 import torch.distributed
-from torch.distributed import P2POp
+try:
+    from torch.distributed import P2POp
+except ImportError:
+    # ``P2POp`` is unavailable on some stripped torch builds (e.g. older
+    # ROCm wheels). It is only used by the MoE expert-parallel P2P path
+    # below; provide a lightweight stand-in so the module always imports.
+    class P2POp:
+        def __init__(self, *args, **kwargs):
+            pass
 
 from sglang.srt.elastic_ep.elastic_ep import ElasticEPStateManager
 from sglang.srt.environ import envs

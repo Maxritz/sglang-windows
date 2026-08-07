@@ -9493,16 +9493,40 @@ class PortArgs:
 
         if not server_args.enable_dp_attention:
             # Normal case, use IPC within a single node
-            return PortArgs(
-                tokenizer_ipc_name=f"ipc://{tempfile.NamedTemporaryFile(delete=False).name}",
-                scheduler_input_ipc_name=f"ipc://{tempfile.NamedTemporaryFile(delete=False).name}",
-                detokenizer_ipc_name=f"ipc://{tempfile.NamedTemporaryFile(delete=False).name}",
-                nccl_port=nccl_port,
-                rpc_ipc_name=f"ipc://{tempfile.NamedTemporaryFile(delete=False).name}",
-                metrics_ipc_name=f"ipc://{tempfile.NamedTemporaryFile(delete=False).name}",
-                tokenizer_worker_ipc_name=tokenizer_worker_ipc_name,
-                decoupled_spec_ipc_config=decoupled_spec_ipc_config,
-                instance_id=instance_id,
+            if os.name == "nt":
+                # Windows ZMQ builds do not support the ipc:// transport, so
+                # derive TCP endpoints on the loopback interface for the
+                # single-node IPC channels (mirrors the DP-attention branch).
+                port_base = server_args.port + ZMQ_TCP_PORT_DELTA
+                if port_base + 5 > 65535:
+                    port_base = server_args.port - ZMQ_TCP_PORT_DELTA
+                detokenizer_port = port_base + 1
+                rpc_port = port_base + 2
+                metrics_port = port_base + 3
+                scheduler_input_port = port_base + 4
+                ha = NetworkAddress("127.0.0.1", port_base)
+                return PortArgs(
+                    tokenizer_ipc_name=ha.to_tcp(),
+                    scheduler_input_ipc_name=NetworkAddress(
+                        "127.0.0.1", scheduler_input_port
+                    ).to_tcp(),
+                    detokenizer_ipc_name=NetworkAddress(
+                        "127.0.0.1", detokenizer_port
+                    ).to_tcp(),
+                    nccl_port=nccl_port,
+                    rpc_ipc_name=NetworkAddress("127.0.0.1", rpc_port).to_tcp(),
+                    metrics_ipc_name=NetworkAddress(
+                        "127.0.0.1", metrics_port
+                    ).to_tcp(),
+                    tokenizer_worker_ipc_name=(
+                        NetworkAddress(
+                            "127.0.0.1", port_base + 6
+                        ).to_tcp()
+                        if tokenizer_worker_ipc_name
+                        else None
+                    ),
+                    decoupled_spec_ipc_config=decoupled_spec_ipc_config,
+                    instance_id=instance_id,
             )
         else:
             # DP attention. Use TCP + port to handle both single-node and multi-node.

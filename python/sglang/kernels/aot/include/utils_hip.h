@@ -343,7 +343,15 @@ inline bool getEnvEnablePDL() {
 #ifndef USE_ROCM
 #define WARP_SIZE 32
 #else
-#if defined(__GFX9__) || !defined(__HIP_DEVICE_COMPILE__)
+// SGLANG_RDNA4 is set by the build (setup_rocm.py) for single-arch gfx1201 builds. It must take
+// priority over the __HIP_DEVICE_COMPILE__ check below: that check is only true during HIP's
+// device-side compilation pass, so on the host-side pass it always falls through to 64 regardless
+// of target GPU, silently mismatching the device pass's wave32 value for RDNA4 (gfx1201) and
+// producing a host-computed launch config (e.g. dim3 block_dim(WARP_SIZE, ...)) that violates the
+// device-compiled kernel's __launch_bounds__(WARPS_PER_CTA * WARP_SIZE) -> hipErrorLaunchFailure.
+#if defined(SGLANG_RDNA4)
+#define WARP_SIZE 32
+#elif defined(__GFX9__) || !defined(__HIP_DEVICE_COMPILE__)
 #define WARP_SIZE 64
 #else
 #define WARP_SIZE 32

@@ -603,6 +603,17 @@ def get_amdgpu_memory_capacity():
         raise RuntimeError(
             "rocm-smi not found. Ensure AMD ROCm drivers are installed and accessible."
         )
+    except RuntimeError as e:
+        # rocminfo / the shell pipeline is unavailable (e.g. Windows ROCm where
+        # rocminfo is not on PATH, or the grep pipeline can't run).  Fall back
+        # to the torch CUDA/HIP memory query, mirroring the nvidia-smi/musa
+        # fallback path below.
+        if not torch.cuda.is_available():
+            raise
+        return _cuda_mem_fallback(
+            f"AMD GPU memory probe via rocminfo failed ({e}). "
+            f"Falling back to torch.cuda.mem_get_info()."
+        )
 
 
 def get_device_sm():
@@ -2094,7 +2105,7 @@ def kill_process_tree(
 
             # Sometime processes cannot be killed with SIGKILL (e.g, PID=1 launched by kubernetes),
             # so we send an additional signal to kill them.
-            itself.send_signal(signal.SIGQUIT)
+            itself.send_signal(getattr(signal, "SIGQUIT", None) or signal.SIGTERM)
             killed.append(itself)
         except psutil.NoSuchProcess:
             pass

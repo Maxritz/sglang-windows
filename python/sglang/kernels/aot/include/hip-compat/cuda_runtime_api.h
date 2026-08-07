@@ -172,6 +172,11 @@ static inline cudaError_t cudaStreamIsCapturing(cudaStream_t stream,
                                                 cudaStreamCaptureStatus* status) {
   return hipStreamIsCapturing(stream, status);
 }
+static inline cudaError_t cudaStreamGetCaptureInfo(cudaStream_t stream,
+                                                   cudaStreamCaptureStatus* status,
+                                                   uint64_t* capture_id = nullptr) {
+  return hipStreamGetCaptureInfo(stream, status, capture_id);
+}
 static inline cudaError_t cudaStreamEndCapture(cudaStream_t stream, cudaGraph_t* graph) {
   return hipStreamEndCapture(stream, graph);
 }

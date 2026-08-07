@@ -160,7 +160,8 @@ class WatchdogRaw:
         if not self.soft:
             # Wait for some time so that the parent process can print the error.
             time.sleep(5)
-            self.parent_process.send_signal(signal.SIGQUIT)
+            _notify_signal = getattr(signal, "SIGQUIT", None) or signal.SIGTERM
+            self.parent_process.send_signal(_notify_signal)
 
 
 class SubprocessWatchdog:
@@ -216,8 +217,9 @@ class SubprocessWatchdog:
             logger.error(
                 f"Subprocess {name} (pid={proc.pid}) crashed "
                 f"with exit code {proc.exitcode}. "
-                f"Triggering SIGQUIT for cleanup..."
+                f"Triggering cleanup signal..."
             )
-            os.kill(os.getpid(), signal.SIGQUIT)
+            _notify_signal = getattr(signal, "SIGQUIT", None) or signal.SIGTERM
+            os.kill(os.getpid(), _notify_signal)
             return True
         return False

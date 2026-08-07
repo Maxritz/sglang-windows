@@ -4957,7 +4957,10 @@ def run_scheduler_process(
     except Exception:
         traceback = get_exception_traceback()
         logger.error(f"Scheduler hit an exception: {traceback}")
-        parent_process.send_signal(signal.SIGQUIT)
+        # SIGQUIT does not exist on Windows; fall back to SIGTERM so the
+        # parent process is still notified and can tear down the tree.
+        _child_notify_signal = getattr(signal, "SIGQUIT", None) or signal.SIGTERM
+        parent_process.send_signal(_child_notify_signal)
         # Opt-in: SIGKILL the pgroup so sibling ranks don't spew thousands
         # of NCCL/TCPStore tracebacks before they finally die.
         if envs.SGLANG_KILLPG_ON_SCHEDULER_EXCEPTION.get():

@@ -12,9 +12,22 @@ from typing import Any
 
 import torch
 import torch.distributed as dist
-import torch.distributed._symmetric_memory as symm_mem
+
 import triton
 import triton.language as tl
+
+try:
+    import torch.distributed._symmetric_memory as symm_mem
+except (ImportError, AttributeError, RuntimeError) as _symm_mem_import_err:
+    # ``torch.distributed._symmetric_memory`` is unavailable on some platforms
+    # (e.g. stripped Windows ROCm torch wheels that omit the compiled
+    # distributed extension).  The symmetric-memory all-gather kernel below is
+    # only used for multi-rank DP-attention with NVLink multicast; a
+    # single-device inference run never instantiates ``MultimemAllGatherer``.
+    # Keep ``triton``/``tl`` imported above (they are needed to define the
+    # kernels); only the symm_mem-dependent call sites fall back to NCCL.
+    symm_mem = None
+    _SYMM_MEM_IMPORT_ERR = _symm_mem_import_err
 
 logger = logging.getLogger(__name__)
 

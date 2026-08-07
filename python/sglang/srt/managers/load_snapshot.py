@@ -38,7 +38,18 @@ PULL socket (only one can bind); the other reads plain SHM.
 
 from __future__ import annotations
 
-import fcntl
+try:
+    import fcntl
+    _LOCK_EX = fcntl.LOCK_EX
+    _LOCK_SH = fcntl.LOCK_SH
+    _LOCK_UN = fcntl.LOCK_UN
+except ImportError:
+    # fcntl is POSIX-only; absent on Windows.  The SHM-based load-snapshot
+    # reader/writer is only used for single-node DP balancing and the
+    # /dev/shm path does not exist on Windows; fall back to no-op locks so the
+    # import chain still works for single-process execution.
+    fcntl = None
+    _LOCK_EX = _LOCK_SH = _LOCK_UN = 0
 import hashlib
 import logging
 import mmap
@@ -276,6 +287,9 @@ SLOT_SIZE = 16 * 1024
 
 @contextmanager
 def file_lock(fd: int, lock_type: int):
+    if fcntl is None:
+        yield
+        return
     fcntl.flock(fd, lock_type)
     try:
         yield
@@ -321,7 +335,7 @@ class ShmLoadSnapshotWriter:
 
         self.fd = os.open(path, os.O_CREAT | os.O_RDWR, 0o600)
         try:
-            with file_lock(self.fd, fcntl.LOCK_EX):
+            with file_lock(self.fd, _LOCK_EX):
                 os.ftruncate(self.fd, size)
                 self.mmap = mmap.mmap(self.fd, size, access=mmap.ACCESS_WRITE)
                 HEADER_STRUCT.pack_into(
@@ -339,7 +353,7 @@ class ShmLoadSnapshotWriter:
                 f"snapshot dp_rank={snapshot.dp_rank} does not match writer dp_rank={self.dp_rank}"
             )
 
-        with file_lock(self.fd, fcntl.LOCK_EX):
+        with file_lock(self.fd, _LOCK_EX):
             self._write_payload(snapshot)
 
     def _write_payload(self, snapshot: LoadSnapshot) -> None:
@@ -439,7 +453,7 @@ class ShmLoadSnapshotReader:
             return False
 
         try:
-            with file_lock(fd, fcntl.LOCK_SH):
+            with file_lock(fd, _LOCK_SH):
                 mapped = mmap.mmap(fd, size, access=mmap.ACCESS_READ)
                 magic, version, dp_size, slot_size = HEADER_STRUCT.unpack_from(
                     mapped, 0
@@ -474,7 +488,7 @@ class ShmLoadSnapshotReader:
             return None
 
         assert self.fd is not None
-        with file_lock(self.fd, fcntl.LOCK_SH):
+        with file_lock(self.fd, _LOCK_SH):
             return self._read_slot(dp_rank)
 
     def _read_slot(self, dp_rank: int) -> Optional[LoadSnapshot]:
@@ -498,7 +512,7 @@ class ShmLoadSnapshotReader:
             return []
 
         assert self.fd is not None
-        with file_lock(self.fd, fcntl.LOCK_SH):
+        with file_lock(self.fd, _LOCK_SH):
             loads = []
             for r in range(self.dp_size):
                 load = self._read_slot(r)

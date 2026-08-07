@@ -45,7 +45,6 @@ import numpy as np
 import orjson
 import requests
 import uvicorn
-import uvloop
 from fastapi import (
     Body,
     Depends,
@@ -186,7 +185,16 @@ from sglang.utils import get_exception_traceback
 from sglang.version import __version__
 
 logger = logging.getLogger(__name__)
-asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
+
+try:
+    import uvloop
+
+    _UVLOOP_AVAILABLE = True
+except ImportError:
+    _UVLOOP_AVAILABLE = False
+
+if _UVLOOP_AVAILABLE:
+    asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
 
 # Global constants
 HEALTH_CHECK_TIMEOUT = int(os.getenv("SGLANG_HEALTH_CHECK_TIMEOUT", 20))

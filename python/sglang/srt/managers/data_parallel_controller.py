@@ -863,4 +863,4 @@ def run_data_parallel_controller_process(
     except Exception:
         traceback = get_exception_traceback()
         logger.error(f"DataParallelController hit an exception: {traceback}")
-        parent_process.send_signal(signal.SIGQUIT)
+        parent_process.send_signal(getattr(signal, "SIGQUIT", None) or signal.SIGTERM)

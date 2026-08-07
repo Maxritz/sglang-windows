@@ -1,5 +1,11 @@
-import fcntl
 import logging
+try:
+    import fcntl
+except ImportError:
+    # fcntl is POSIX-only; absent on Windows.  The flock-based cross-process
+    # IPC sync below is only used for multi-process CUDA-IPC transport, which
+    # Windows does not exercise in the single-device/single-process path.
+    fcntl = None
 import threading
 import time
 from multiprocessing import shared_memory
@@ -449,10 +455,14 @@ class CudaIpcTensorTransportProxy:
             open(SHM_LOCK_FILE, "a").close()
             # Keep the counter update atomic across scheduler processes.
             with open(SHM_LOCK_FILE, "w+") as f:
-                fcntl.flock(f, fcntl.LOCK_EX)
-                sync_flag = self.get_sync_flag
-                sync_flag += consumer_count
-                fcntl.flock(f, fcntl.LOCK_UN)
+                if fcntl is not None:
+                    fcntl.flock(f, fcntl.LOCK_EX)
+                try:
+                    sync_flag = self.get_sync_flag
+                    sync_flag += consumer_count
+                finally:
+                    if fcntl is not None:
+                        fcntl.flock(f, fcntl.LOCK_UN)
             self.close_shm()
         self._consumer_acknowledged = True
 

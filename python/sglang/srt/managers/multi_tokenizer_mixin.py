@@ -641,7 +641,7 @@ def run_multi_detokenizer_router_process(
         logger.error(f"MultiDetokenizerRouter hit an exception: {traceback}")
         if router is not None:
             router.socket_mapping.clear_all_sockets()
-        parent_process.send_signal(signal.SIGQUIT)
+        parent_process.send_signal(getattr(signal, "SIGQUIT", None) or signal.SIGTERM)
 
 
 class TokenizerWorker(TokenizerManager):
