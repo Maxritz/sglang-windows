@@ -671,6 +671,7 @@ void topkGatingSoftmaxKernelLauncher(
     cudaStream_t stream) {
   static constexpr int WARPS_PER_TB = 4;
   switch (num_experts) {
+#ifndef USE_ROCM
     case 1:
       LAUNCH_SOFTMAX(T, 1, WARPS_PER_TB);
       break;
@@ -701,6 +702,17 @@ void topkGatingSoftmaxKernelLauncher(
     case 512:
       LAUNCH_SOFTMAX(T, 512, WARPS_PER_TB);
       break;
+#endif
+    // On ROCm (USE_ROCM) the pow2 topkGatingSoftmax specialization faults on
+    // RDNA Wave32: with THREADS_PER_ROW==1 the in-warp butterfly shuffle runs
+    // zero iterations while 252/256 threads in the CTA hit divergent
+    // __syncthreads() and write the 'num_experts' sentinel to indices -> GPU
+    // execution fault ("unspecified launch failure"). Route every pow2 width
+    // through the proven moeSoftmax BlockReduce path instead.
+    // ponytail: pow2 widths 1..512 route via default/moeSoftmax on ROCm.
+    // ceiling: loses the hand-tuned pow2 fast path. upgrade: fix
+    // SGLANG_SHFL_XOR_SYNC_WIDTH in utils_hip.h for Wave32 and re-enable the
+    // cases above under USE_ROCM.
     default: {
       TORCH_CHECK(
           softmax_workspace != nullptr,
@@ -764,7 +776,16 @@ void topk_softmax(
   TORCH_CHECK(topk > 0, "topk must be greater than 0");
 
   const bool is_pow_2 = (num_experts != 0) && ((num_experts & (num_experts - 1)) == 0);
+  // On ROCm the pow2 topkGatingSoftmax fast-path is disabled (faults on
+  // Wave32), so pow2 widths are routed through the default moeSoftmax path
+  // below — which requires a valid softmax_workspace. Allocate one for
+  // every case under USE_ROCM (cheap, num_tokens*num_experts float32).
+  // ponytail: tiny workspace alloc; ceiling = extra buf on NVIDIA too.
+#ifdef USE_ROCM
+  const bool needs_workspace = true;
+#else
   const bool needs_workspace = !is_pow_2 || num_experts > 512;
+#endif
   const int64_t workspace_size = needs_workspace ? num_tokens * num_experts : 0;
 
   const at::cuda::OptionalCUDAGuard device_guard(device_of(gating_output));
