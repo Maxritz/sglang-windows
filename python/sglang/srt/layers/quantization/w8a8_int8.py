@@ -28,6 +28,7 @@ from sglang.srt.utils import (
     cpu_has_amx_support,
     is_cpu,
     is_cuda,
+    is_hip,
     is_host_cpu_arm64,
     set_weight_attrs,
     use_intel_amx_backend,
@@ -57,6 +58,15 @@ if _is_cuda:
         M = mat_a.shape[-2]
         N = mat_b.shape[-1]
         return mat_a.new_empty((M, N), dtype=out_dtype)
+
+elif is_hip():
+
+    def int8_scaled_mm(*args, **kwargs):
+        raise NotImplementedError(
+            "int8_scaled_mm (W8A8 INT8 dense) is a CUDA-only CUTLASS kernel and is "
+            "not ported to ROCm/HIP in this Windows/ROCm fork. Use an FP8/block-fp8 "
+            "quant scheme instead (fp8_scaled_mm IS ported)."
+        )
 
 
 logger = logging.getLogger(__name__)

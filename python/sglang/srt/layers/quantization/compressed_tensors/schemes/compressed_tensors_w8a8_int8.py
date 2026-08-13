@@ -21,13 +21,21 @@ from sglang.srt.layers.quantization.compressed_tensors.schemes import (
     CompressedTensorsLinearScheme,
 )
 from sglang.srt.layers.quantization.utils import requantize_with_max_scale
-from sglang.srt.utils import is_cuda
+from sglang.srt.utils import is_cuda, is_hip
 
 __all__ = ["CompressedTensorsW8A8Int8", "NPUCompressedTensorsW8A8Int8"]
 
 _is_cuda = is_cuda()
 if _is_cuda:
     from sgl_kernel import int8_scaled_mm
+elif is_hip():
+
+    def int8_scaled_mm(*args, **kwargs):
+        raise NotImplementedError(
+            "int8_scaled_mm (W8A8 INT8 dense) is a CUDA-only CUTLASS kernel and is "
+            "not ported to ROCm/HIP in this Windows/ROCm fork. Use an FP8/block-fp8 "
+            "quant scheme instead (fp8_scaled_mm IS ported)."
+        )
 
 
 class CompressedTensorsW8A8Int8(CompressedTensorsLinearScheme):

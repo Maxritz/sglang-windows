@@ -1,6 +1,5 @@
 import json
 import os
-import resource
 from json import JSONDecodeError
 from typing import Dict, List, Optional, Union
 
@@ -148,6 +147,13 @@ def is_file_valid_json(path):
 
 
 def set_ulimit(target_soft_limit=65535):
+    # RLIMIT_NOFILE / the resource module are POSIX-only; Windows has no
+    # per-process file-descriptor soft limit to raise.
+    if os.name == "nt":
+        return
+
+    import resource
+
     resource_type = resource.RLIMIT_NOFILE
     current_soft, current_hard = resource.getrlimit(resource_type)
 

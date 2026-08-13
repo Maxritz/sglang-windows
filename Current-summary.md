@@ -1,7 +1,8 @@
 # Current-port Summary — sglang-windows / ROCm-on-Windows (gfx1201)
 
 > Author: rr. Generated after the topk_softmax launch-failure debug pass.
-> Status: worktree clean for the port kernel; main has the guard commit.
+> Status: main = kernel guard + report + agents.md; worktree has the 3 new
+> fix commits staged (set_ulimit NT, int8_scaled_mm HIP guard x2) — pending push.
 > This file is **fork-only** — upstream SGLang is Linux/CUDA. Do NOT sync `moe_topk_softmax_kernels.cu`
 > `common_extension_rocm.cu` changes upstream.
 
@@ -79,23 +80,47 @@ copy_to_gpu_no_ce                                                        (jit/el
 fwd_sparse, varlen_fwd_sparse                                           (flashattn sparse; not in rocm AOT)
 ```
 
-**True gaps — no obvious JIT fallback (need AOT or torch fallback):**
+**True gaps / special cases — status after agent audit (Aug 2026):**
 ```
-cutlass_mla_decode                  (cuBLASw4a8 cutlass; MLA decode fast path)
-cutlass_w4a8_moe_mm, get_cutlass_w4a8_moe_mm_data   (cutlass moe)
-int8_scaled_mm                      (no jit equivalent)
-es_sm100_mxfp8_blockscaled_grouped_mm_quant  (only the non-quant variant is AOT'd for roc)
-dense_prefill_fwd (flashmla SM100, flash_extension.cc)  (CUDA+cutlass; torch fallback?)
+cutlass_mla_decode                    FALLBACK-OK: default ROCm MLA backend = triton/aiter, not cutlass. No action.
+                                       (cutlass_mla_backend.py only if user forces --attention-backend cutlass_mla -> NameError; optional clean-error polish)
+cutlass_w4a8_moe_mm + get_*_data      GAP but W4A8-checkpoint-only (Sm90 wgmma, cannot compile for gfx1201). Fails loudly (RuntimeError) on use. YAGNI-deferred.
+int8_scaled_mm                        GUARDED (this session): on HIP, clean NotImplementedError instead of NameError-at-forward.
+                                       (w8a8_int8.py + compressed_tensors_w8a8_int8.py). Real support = new HIP sdot4 GEMM, deferred.
+es_sm100_mxfp8_blockscaled_grouped_quant   INTENTIONAL SKIP (SM100 tcgen05 TMA, dead on RDNA4; setup_rocm.py:50-52 excludes it).
+                                       MXFP8 MoE hard-blocked at load (fp8.py:1734) with escape hatch SGLANG_FORCE_MXFP8_BLOCK_CONVERT=1 -> block-fp8. No action.
+dense_prefill_fwd (flashmla SM100, flash_extension.cc)  CUDA-only; SM100 flashmla. No ROCm AOT. (MLP/MLA prefill uses triton fallback.)
 ```
-These matter for MXFP8 / MLA-heavy decode prefill. Gen still works (rmsnorm via JIT).
+Gen still works (rmsnorm via JIT). The 45-op ROCm AOT set covers the active LLaMA/Qwen/DS-V3-R1 (FP8) serving path.
 
-### 3b. Build/test harness
+### 3b. sm100 pyd load failure 1114 — ROOT-CAUSED (Aug 2026 agent audit)
 
-- ROCm pyd builds but the `sm100/common_ops.pyd` (my guarded build) hits **load failure 1114** (static-init/CRT defect in this Windows port) — so the guard can't be cleanly re-built+re-run locally here. Validated once (flaky load) in `force_sm100_test.py`. The **pip-wheel pyd** (`common_ops.cp312-win_amd64.pyd`) loads clean under 7.14 and runs all widths OK — that's what production uses today.
+NOT a static-init/CRT defect — the local pyd is structurally identical to the
+pip-wheel pyd (same DLL deps: `torch_cpu.dll, c10.dll, c10_hip.dll,
+amdhip64_7.dll, msvcp140/vcruntime140`; same `/MD` CRT; same `.CRT$XCU` ->
+`__hip_module_ctor` + `TORCH_LIBRARY` ctor init tables). It is a **load-time
+dependency-resolution failure of `amdhip64_7.dll`**: when the pyd loads in a
+process where torch has NOT yet pinned the bundled 7.14 runtime (direct
+`import sgl_kernel.common_ops`, a worker subprocess, or a race), the loader
+falls through to `C:\Program Files\AMD\ROCm\6.4\bin\amdhip64_7.dll` (stale 6.4,
+on PATH, 7.14 absent) -> DllMain/ABI mismatch -> `ERROR_DLL_INIT_FAILED`.
+Intermittent because it depends on PATH order + whether 7.14 was already loaded.
 
-### 3c. Other
+FIX (env, 0 code lines):
+```
+$env:PATH = "F:\ROCM-7.14.0-Windows\bin;$repo\.venv312\Lib\site-packages\torch\lib;$repo\.venv312\Lib\site-packages\_rocm_sdk_core\bin;F:\ROCM-7.14.0-Windows\lib\llvm\bin;C:\Windows\system32"
+```
+and ALWAYS `import sgl_kernel` (imports torch first, `sgl_kernel/__init__.py:11`),
+never `import sgl_kernel.common_ops` directly. Do NOT add `/DELAYLOAD:amdhip64_7.dll`
+(amdhip64 is a hard dep of c10_hip anyway; would just move the failure).
 
-- `SGLANG_DISABLE_PINNED_D2H` (D2H pinned-pool timing workaround) + `set_ulimit` nt-guard: **junked** to `junk/` (NOT committed). Available if the hipEventSynchronize-timing quirk resurfaces. See §5.
+### 3c. D2H pinned-pool workaround — DELETED (recommendation B)
+
+`SGLANG_DISABLE_PINNED_D2H` + `_async_d2h` pageable branch: code is CORRECT (no
+race/leak; `record_stream` still present in the pinned path) but it worked around
+a **phantom root cause** — the real fault was PATH pollution. Env-flag was dead
+weight (YAGNI). junk/environ.py + junk/managers_utils.py deleted; only
+`set_ulimit` NT guard was a real bug -> committed (see §5).
 
 ## 4. Runtime / env fix (no commit)
 
@@ -114,14 +139,21 @@ and `ROCM_PATH=F:\ROCM-7.14.0-Windows`. Do NOT put `C:\Program Files\AMD\ROCm\6.
 ```
 COMMITTED+mAIN:
   moe_topk_softmax_kernels.cu   guard pow2 under USE_ROCM  (03564539b)
-  .gitignore                    add junk/                  (same batch)
-JUNKED (junk/, gitignored, NOT committed):
-  junk/benchmark_utils.py       = set_ulimit nt-guard       (archive of python/sglang/benchmark/utils.py)
-  junk/environ.py               = SGLANG_DISABLE_PINNED_D2H (archive of python/sglang/srt/environ.py)
-  junk/managers_utils.py        = _async_d2h pinned bypass  (archive of python/sglang/srt/managers/utils.py)
-  junk/graphify-out/            = skill scratch (moved out of repo root)
-UNCOMMITTED-but-PRE-EXISTING (NOT mine, left untouched):  NONE after restore.
-  (python/sglang/{benchmark/utils.py,srt/environ.py,srt/managers/utils.py} restored to HEAD-clean.)
+  .gitignore                    add junk/                  (6b1abf792)
+  Current-summary.md            this report                (7ba084485)
+  agents.md                     fork port conventions       (7ba084485)
+COMMITTED (this session, staged — see git log):
+  benchmark/utils.py            set_ulimit NT guard        (real Windows bug: HEAD `import resource` at top crashes on nt)
+  w8a8_int8.py                  int8_scaled_mm HIP guard   (clean NotImplementedError on ROCm)
+  compressed_tensors_w8a8_int8.py  int8_scaled_mm HIP guard (same)
+JUNKED (junk/, gitignored):
+  junk/benchmark_utils.py       reference copy of set_ulimit fix (redundant once committed)
+  junk/graphify-out/            skill scratch (moved out of repo root)
+DELETED (junk/, per agent rec B):
+  junk/environ.py               D2H phantom-root-cause workaround
+  junk/managers_utils.py        D2H phantom-root-cause workaround
+UNCOMMITTED-but-PRE-EXISTING (NOT mine):  NONE after restore.
+  (python/sglang/srt/{environ.py,managers/utils.py} = HEAD-clean, unchanged.)
 ```
 
 ## 6. Appendix — op-register diff script
@@ -134,9 +166,12 @@ REMAINS = CUDA-only (34).
 ## 7. When porting is "done"
 
 Tick-box as each lands:
-- [x] topk_softmax pow2 guard (ROCm)
+- [x] topk_softmax pow2 guard (ROCm) — `03564539b`
 - [x] all gen-critical ops run clean under 7.14 PATH on gfx1201 (matrix_test)
-- [ ] cutlass_mla_decode / cutlass_w4a8_moe_mm AOT for ROCm (true gaps)
-- [ ] es_sm100_mxfp8_blockscaled_grouped_mm_quant AOT for ROCm
-- [ ] sm100 pyd local build+load 1114 defect resolved (separate static-init/CRT issue)
-- [ ] D2H pinned-pool fix: decide commit-vs-junk (currently junked)
+- [x] sm100 pyd load 1114 root-caused — env PATH + `import sgl_kernel` ordering (§3b), not a build defect
+- [x] set_ulimit NT crash fixed (benchmark/utils.py)
+- [x] int8_scaled_mm HIP guard — clean NotImplementedError instead of NameError (w8a8_int8.py + compressed_tensors)
+- [x] D2H pinned-pool workaround deleted (phantom root cause, rec B)
+- [ ] real W8A8 INT8 dense support on ROCm — new HIP sdot4 GEMM kernel (deferred, currently guarded)
+- [ ] cutlass_w4a8_moe_mm on ROCm — needs real W4A8 grouped GEMM (Sm90 wgmma won't compile for gfx1201; W4A8-only path, deferred)
+- [ ] optional polish: explicit "cutlass_mla not supported on ROCm" error in cutlass_mla_backend.py (today: NameError if user forces it)
