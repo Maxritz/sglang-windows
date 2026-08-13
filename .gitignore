@@ -300,3 +300,4 @@ python/sglang/kernels/aot/python/sgl_kernel/sm100/
 
 # Scratch verification harness (compile_port.ps1, objs, logs)
 port-test/
+junk/
